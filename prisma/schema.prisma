@@ -1,0 +1,174 @@
+// VetCare — schéma Prisma (MySQL)
+// -----------------------------------------------------------------------
+// Remplace le stockage localStorage par une vraie base de données.
+// Connecte-toi à ta base MySQL via la variable DATABASE_URL dans .env.local
+// Exemple : DATABASE_URL="mysql://user:password@localhost:3306/vetcare"
+// -----------------------------------------------------------------------
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Équipe (vétérinaires / staff / admin) ───
+// Remplace le tableau ADMIN_TEAM codé en dur dans admin.ts.
+model Admin {
+  id        String   @id @default(cuid())
+  name      String
+  role      String // ex: "Directrice & Chirurgienne"
+  adminRole String // "directrice" | "vétérinaire" | "assistante"
+  img       String   @db.Text
+  email     String   @unique
+  password  String // hashé avec bcryptjs (voir prisma/seed.ts et src/lib/auth.ts)
+  createdAt DateTime @default(now())
+
+  dismissedNotifications DismissedNotification[]
+  seenMarkers            SeenMarker[]
+  teamMessagesSent       TeamMessage[]            @relation("TeamMessageAuthor")
+
+  @@map("admins")
+}
+
+// ─── Clients ───
+model Client {
+  id           String    @id @default(cuid())
+  name         String
+  email        String    @unique
+  phone        String?
+  pet          String?
+  petSpecies   String?
+  petBreed     String?
+  petGender    String? // "Femelle" | "Mâle"
+  petSterilized Boolean?
+  assignedVet  String? // nom du vétérinaire référent actuel
+  assignedVetBy String?
+  assignedVetAt DateTime?
+  joinedAt     DateTime  @default(now())
+  lastSeenMessagesAt DateTime?
+
+  appointments Appointment[]
+  messages     ClientMessage[]
+
+  @@map("clients")
+}
+
+// ─── Stagiaires ───
+model Stagiaire {
+  id           String    @id @default(cuid())
+  name         String
+  email        String    @unique
+  phone        String?
+  school       String?
+  motivation   String?   @db.Text
+  mentor       String?
+  mentorAssignedBy String?
+  mentorAssignedAt DateTime?
+  startDate    DateTime
+  endDate      DateTime
+  status       String    @default("en cours") // "en cours" | "terminé"
+  progress     Int       @default(0)
+  joinedAt     DateTime  @default(now())
+
+  messages InternMessage[]
+
+  @@map("stagiaires")
+}
+
+// ─── Rendez-vous ───
+model Appointment {
+  id           String   @id @default(cuid())
+  clientId     String
+  client       Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  clientName   String
+  pet          String?
+  date         DateTime // date du RDV (heure ignorée, voir champ time)
+  time         String // "14:30"
+  reason       String
+  vet          String
+  status       String   @default("à venir") // "à venir" | "terminé" | "annulé"
+  reminderSent Boolean  @default(false)
+  createdAt    DateTime @default(now())
+
+  @@map("appointments")
+}
+
+// ─── Messagerie client ↔ équipe ───
+model ClientMessage {
+  id       String   @id @default(cuid())
+  clientId String
+  client   Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  from     String // "user" | "team"
+  author   String
+  text     String   @db.Text
+  withVet  String // vétérinaire concerné par ce fil de discussion
+  at       DateTime @default(now())
+
+  @@map("client_messages")
+}
+
+// ─── Messagerie stagiaire ↔ équipe ───
+model InternMessage {
+  id          String    @id @default(cuid())
+  stagiaireId String
+  stagiaire   Stagiaire @relation(fields: [stagiaireId], references: [id], onDelete: Cascade)
+  from        String // "stagiaire" | "equipe"
+  author      String
+  text        String    @db.Text
+  at          DateTime  @default(now())
+
+  @@map("intern_messages")
+}
+
+// ─── Messagerie interne équipe (admin ↔ admin) ───
+model TeamMessage {
+  id         String   @id @default(cuid())
+  authorId   String
+  author     Admin    @relation("TeamMessageAuthor", fields: [authorId], references: [id], onDelete: Cascade)
+  authorName String // dénormalisé pour affichage rapide
+  toName     String // nom de l'admin destinataire
+  text       String   @db.Text
+  at         DateTime @default(now())
+
+  @@map("team_messages")
+}
+
+// ─── Notification "nouvelle inscription client" pour le tableau de bord admin ───
+model NewClientNotification {
+  id    String   @id @default(cuid())
+  name  String
+  email String
+  at    DateTime @default(now())
+
+  @@map("new_client_notifications")
+}
+
+// ─── Notifications individuellement "vues/fermées" par un admin ───
+// Remplace le système "tout marquer comme lu" par un dismiss par notification.
+model DismissedNotification {
+  id          String   @id @default(cuid())
+  adminId     String
+  admin       Admin    @relation(fields: [adminId], references: [id], onDelete: Cascade)
+  notifId     String // ex: "appt_xxx", "newclient_email_at"
+  dismissedAt DateTime @default(now())
+
+  @@unique([adminId, notifId])
+  @@map("dismissed_notifications")
+}
+
+// ─── Marqueurs "vu" génériques (fils de discussion, etc.) ───
+// scope ex: "client_thread:email@x.com", "intern_thread:email@x.com",
+//           "team_thread:Dr. Lucas Bernard"
+model SeenMarker {
+  id      String   @id @default(cuid())
+  adminId String
+  admin   Admin    @relation(fields: [adminId], references: [id], onDelete: Cascade)
+  scope   String
+  seenAt  DateTime @default(now())
+
+  @@unique([adminId, scope])
+  @@map("seen_markers")
+}
